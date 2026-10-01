@@ -1,6 +1,6 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the necessary extensibility types to use in your code below
-import { Disposable, ExtensionContext, commands, window, workspace, Uri, Extension, extensions } from 'vscode';
+import { Disposable, ExtensionContext, commands, window, workspace, Uri, extensions } from 'vscode';
 import { AWClient, IAppEditorEvent } from '../aw-client-js/src/aw-client';
 import { hostname } from 'os';
 import { API, GitExtension } from './git';
@@ -81,9 +81,12 @@ class ActivityWatch {
     }
 
     private async initGit() {
-        const extension = extensions.getExtension('vscode.git') as Extension<GitExtension>;
+        const extension = extensions.getExtension<GitExtension>('vscode.git');
+        if (!extension) {
+            return;
+        }
         const gitExtension = extension.isActive ? extension.exports : await extension.activate();
-        return gitExtension.getAPI(1);
+        return gitExtension.enabled ? gitExtension.getAPI(1) : undefined;
     }
 
     public loadConfigurations() {
@@ -108,13 +111,14 @@ class ActivityWatch {
             const heartbeat = this._createHeartbeat();
             const filePath = this._getFilePath();
             const curTime = new Date().getTime();
-            const branch = this._getCurrentBranch();
+            const branch = this._getCurrentBranch() || 'unknown';
 
             // Send heartbeat if file changed, branch changed or enough time passed
             if (filePath !== this._lastFilePath ||
                     branch !== this._lastBranch ||
                     this._lastHeartbeatTime + (1000 / (this._maxHeartbeatsPerSec)) < curTime) {
                 this._lastFilePath = filePath || 'unknown';
+                this._lastBranch = branch;
                 this._lastHeartbeatTime = curTime;
                 this._sendHeartbeat(heartbeat);
             }
@@ -187,10 +191,11 @@ class ActivityWatch {
     }
 
     private _getCurrentBranch(): string | undefined {
-        if (this._git === undefined) {
+        const fileUri = this._getActiveFileUri();
+        if (this._git === undefined || !fileUri) {
             return;
         }
-        return this._git.repositories[0]?.state?.HEAD?.name;
+        return this._git.getRepository(fileUri)?.state.HEAD?.name;
     }
 
     private _handleError(err: string, isCritical = false): undefined {
